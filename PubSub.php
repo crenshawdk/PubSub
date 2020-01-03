@@ -94,7 +94,7 @@ class PubSub {
     
     /**
      * @param string $action
-     * $return int
+     * @return int
      */
     function count(string $action = "") {
         if(!empty($action)) {
