@@ -1,2 +1,2 @@
 # PubSub
-PubSub for php
+PubSub for php 8.3+
