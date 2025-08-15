@@ -2,126 +2,110 @@
 
 declare(strict_types=1);
 
-class PubSub
+final class EventBus
 {
     /**
-     * @var array<string, array<string, callable>>  // action => [key => callable]
+     * @var array<string, array<string, callable>>
      */
-    private array $actions = [];
+    private array $events = [];
 
     /**
-     * @var array<string, array{action: string, fn: callable}> // key => { action, fn }
+     * @var array<string, string> // key => event name
      */
-    private array $keyIndex = [];
+    private array $keyMap = [];
 
     /**
-     * Subscribe to an action.
+     * Subscribe to an event.
      */
-    public function subscribe(string $action, callable $fn): string
+    public function on(string $event, callable $listener): string
     {
-        $this->actions[$action] ??= [];
+        $this->events[$event] ??= [];
 
-        $key = bin2hex(random_bytes(8)); // secure unique key
-        $this->actions[$action][$key] = $fn;
-        $this->keyIndex[$key] = ['action' => $action, 'fn' => $fn];
+        $key = bin2hex(random_bytes(8));
+        $this->events[$event][$key] = $listener;
+        $this->keyMap[$key] = $event;
 
         return $key;
     }
 
     /**
-     * Subscribe to an action, auto-unsubscribe after first call.
+     * Subscribe to an event and remove listener after first call.
      */
-    public function subscribeOnce(string $action, callable $fn): string
+    public function once(string $event, callable $listener): string
     {
-        $key = null;
-        $key = $this->subscribe($action, function (mixed $data) use ($fn, &$key) {
-            $fn($data);
-            $this->unsubscribeByKey($key);
-        });
+        $wrapper = null;
+        $wrapper = function (...$args) use (&$wrapper, $listener, &$key) {
+            $listener(...$args);
+            $this->offByKey($key);
+        };
+        $key = $this->on($event, $wrapper);
         return $key;
     }
 
     /**
-     * Publish data to all subscribers of an action.
-     *
-     * @return string[] List of called subscription keys
+     * Emit an event with arguments.
      */
-    public function publish(string $action, mixed $data): array
+    public function emit(string $event, mixed ...$args): array
     {
-        if (empty($this->actions[$action])) {
-            return [];
+        $calledKeys = [];
+
+        // Exact event listeners
+        foreach ($this->events[$event] ?? [] as $key => $listener) {
+            $calledKeys[] = $key;
+            $listener(...$args);
         }
 
-        // Clone to avoid modification during iteration
-        $subscriptions = $this->actions[$action];
-        $keys = [];
-
-        foreach ($subscriptions as $key => $subscription) {
-            $keys[] = $key;
-            $subscription($data);
+        // Wildcard listeners
+        foreach ($this->events as $pattern => $listeners) {
+            if (str_ends_with($pattern, '*') && str_starts_with($event, rtrim($pattern, '*'))) {
+                foreach ($listeners as $key => $listener) {
+                    $calledKeys[] = $key;
+                    $listener(...$args);
+                }
+            }
         }
 
-        return $keys;
+        return $calledKeys;
     }
 
     /**
-     * Unsubscribe by key.
+     * Remove a listener by subscription key.
      */
-    public function unsubscribeByKey(string $key): bool
+    public function offByKey(string $key): bool
     {
-        if (!isset($this->keyIndex[$key])) {
+        if (!isset($this->keyMap[$key])) {
             return false;
         }
 
-        $action = $this->keyIndex[$key]['action'];
-        unset($this->actions[$action][$key], $this->keyIndex[$key]);
-
+        $event = $this->keyMap[$key];
+        unset($this->events[$event][$key], $this->keyMap[$key]);
         return true;
     }
 
     /**
-     * Unsubscribe all occurrences of a specific callable.
-     *
-     * @return string[] Keys that were removed
+     * Remove all listeners for an event or all events.
      */
-    public function unsubscribe(callable $fn): array
+    public function clear(?string $event = null): void
     {
-        $removed = [];
-
-        foreach ($this->keyIndex as $key => $meta) {
-            if ($meta['fn'] === $fn) {
-                $this->unsubscribeByKey($key);
-                $removed[] = $key;
+        if ($event) {
+            foreach ($this->events[$event] ?? [] as $key => $_) {
+                unset($this->keyMap[$key]);
             }
+            unset($this->events[$event]);
+        } else {
+            $this->events = [];
+            $this->keyMap = [];
         }
-
-        return $removed;
     }
 
     /**
-     * Remove all subscriptions.
+     * Count listeners.
      */
-    public function clear(): void
+    public function count(?string $event = null): int
     {
-        $this->actions = [];
-        $this->keyIndex = [];
-    }
-
-    /**
-     * Count subscriptions, optionally for a specific action.
-     */
-    public function count(string $action = ""): int
-    {
-        return $action !== ""
-            ? count($this->actions[$action] ?? [])
-            : array_sum(array_map('count', $this->actions));
-    }
-
-    /**
-     * Check if a subscription key exists.
-     */
-    public function keyExists(string $key): bool
-    {
-        return isset($this->keyIndex[$key]);
+        if ($event) {
+            return count($this->events[$event] ?? []);
+        }
+        return array_sum(array_map('count', $this->events));
     }
 }
